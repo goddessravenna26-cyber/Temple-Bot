@@ -1,19 +1,56 @@
+# monero-wallet-rpc sidecar for Railway.
+#
+# KEY DESIGN CHOICE: this container starts in --wallet-dir mode, NOT
+# --wallet-file mode. It boots with no wallet loaded and waits. The bot then
+# calls open_wallet, or generate_from_keys if no wallet exists yet, over
+# JSON-RPC at startup. That is why bot.py owns the view key and this container
+# does not need it.
+#
+# Consequences:
+#   * This container holds NO secrets. The view key lives only on the bot service.
+#   * Wallet creation is idempotent and survives redeploys via the volume.
+#   * A cold start with no volume simply re-restores from keys automatically.
+#
+# The wallet is VIEW-ONLY: it can derive subaddresses and see incoming
+# transfers, but cannot construct a spend. Compromise costs visibility, not funds.
+
 FROM ubuntu:22.04
 
-# Install Monero directly from the secure Linux repository instead of complex external zips
-RUN apt-get update && apt-get install -y monero ca-certificates && rm -rf /var/lib/apt/lists/*
+ARG MONERO_VERSION=v0.18.3.4
+# NOTE: pin and verify the release hash yourself against
+# https://www.getmonero.org/downloads/hashes.txt before production use.
+# I have deliberately not hardcoded a hash I cannot verify for you.
 
-WORKDIR /srv/xmr
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl bzip2 tini util-linux \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+    curl -fSL "https://downloads.getmonero.org/cli/monero-linux-x64-${MONERO_VERSION}.tar.bz2" \
+        -o /tmp/monero.tar.bz2; \
+    mkdir -p /opt/monero; \
+    tar -xjf /tmp/monero.tar.bz2 -C /opt/monero --strip-components=1; \
+    install -m 0755 /opt/monero/monero-wallet-rpc /usr/local/bin/monero-wallet-rpc; \
+    rm -rf /tmp/monero.tar.bz2 /opt/monero
+
+# Fixed UID so a Railway volume chowned once stays writable across rebuilds.
+RUN useradd -u 10001 -m -d /home/monero monero
+
+# WALLET_DIR is the mount point for the Railway volume. It is created and
+# chowned at build time so the daemon can write even before the volume mounts,
+# and re-chowned at runtime by the entrypoint once the volume IS mounted —
+# Railway mounts volumes as root, which would otherwise make this unwritable.
+ENV WALLET_DIR=/wallet/data
+RUN mkdir -p "${WALLET_DIR}" && chown -R monero:monero /wallet
+
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod 0755 /usr/local/bin/entrypoint.sh
 
 EXPOSE 18083
 
-# Launch the view-only wallet tracking daemon directly without needing an entrypoint file
-CMD monero-wallet-rpc \
-    --rpc-bind-ip 0.0.0.0 --rpc-bind-port 18083 \
-    --daemon-address https://moneroworld.com \
-    --wallet-dir /srv/xmr/wallets \
-    --disable-rpc-login \
-    --generate-from-view-key viewonly_wallet \
-    --password-file /dev/null \
-    --non-interactive
+# Starts as root purely to fix volume ownership, then drops to `monero`
+# via gosu-style `setpriv` inside the entrypoint. Never runs the daemon as root.
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
 
