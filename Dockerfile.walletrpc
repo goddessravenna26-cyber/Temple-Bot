@@ -1,13 +1,14 @@
 FROM ubuntu:22.04
 
-RUN apt-get update && apt-get install -y wget bzip2 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y wget bzip2 ca-certificates && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /srv/xmr
 
+# Fixed secure subdomain download path
 RUN wget https://getmonero.org \
-    && tar -xjvf monero-linux-x64-v0.18.3.4.tar.bz2 \
-    && cp monero-x86_64-linux-gnu-v0.18.3.4/monero-wallet-rpc . \
-    && rm -rf monero-linux-x64-v0.18.3.4.tar.bz2 monero-x86_64-linux-gnu-v0.18.3.4
+    && tar -xjvf monero-linux-x64-v0.18.3.3.tar.bz2 \
+    && cp monero-x86_64-linux-gnu-v0.18.3.3/monero-wallet-rpc . \
+    && rm -rf monero-linux-x64-v0.18.3.3.tar.bz2 monero-x86_64-linux-gnu-v0.18.3.3
 
 EXPOSE 18083
 
@@ -19,3 +20,4 @@ CMD ./monero-wallet-rpc \
     --generate-from-view-key viewonly_wallet \
     --password-file /dev/null \
     --non-interactive
+
