@@ -1,17 +1,7 @@
-FROM ubuntu:22.04
-
-# Install basic download tools and secure certificates
-RUN apt-get update && apt-get install -y wget bzip2 ca-certificates && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /srv/xmr
-
-# Universal link forced into a clean tar.bz2 file mapping layout
-RUN wget -O monero-linux.tar.bz2 https://downloads.getmonero.org/linux64 \
-    && tar -xjvf monero-linux.tar.bz2 \
-    && cp monero-x86_64-linux-gnu-*/monero-wallet-rpc /usr/local/bin/ \
-    && rm -rf monero-linux.tar.bz2 monero-*
+FROM sethsimmons/monero-wallet-rpc:latest
 
 # Explicitly build the secure data vault directory with adaptive controls
+USER root
 RUN mkdir -p /srv/xmr/wallets && chmod 777 /srv/xmr/wallets
 
 EXPOSE 18083
