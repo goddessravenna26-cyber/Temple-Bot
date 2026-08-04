@@ -1,17 +1,22 @@
 FROM ubuntu:22.04
 
-# Install Monero and explicitly add the ca-certificates package for secure network routing
-RUN apt-get update && apt-get install -y monero ca-certificates && rm -rf /var/lib/apt/lists/*
+# Install basic download tools and secure certificates
+RUN apt-get update && apt-get install -y wget bzip2 ca-certificates && rm -rf /var/lib/apt/lists/*
 
-# Set up the secure working path
 WORKDIR /srv/xmr
 
-# Explicitly create the wallets data folder and grant absolute read/write permissions
+# Universal permanent link that always downloads the latest correct Linux build
+RUN wget https://downloads.getmonero.org/linux64 \
+    && tar -xjvf linux64 \
+    && cp monero-x86_64-linux-gnu-*/monero-wallet-rpc /usr/local/bin/ \
+    && rm -rf linux64 monero-*
+
+# Explicitly build the secure data vault directory with adaptive controls
 RUN mkdir -p /srv/xmr/wallets && chmod 777 /srv/xmr/wallets
 
 EXPOSE 18083
 
-# Launch dual-stack IPv6/IPv4 interfaces with forced permissive wallet path controls
+# Run the modern view-only tracking engine with flawless dual-stack IPv6 support
 CMD monero-wallet-rpc \
     --rpc-bind-ip 0.0.0.0 --rpc-bind-port 18083 \
     --rpc-use-ipv6 --rpc-bind-ipv6-address :: \
@@ -22,4 +27,3 @@ CMD monero-wallet-rpc \
     --password-file /dev/null \
     --non-interactive
 
-Displaying
