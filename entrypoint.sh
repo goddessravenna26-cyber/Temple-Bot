@@ -1,34 +1,67 @@
-# monero-wallet-rpc as a standalone Railway service.
+#!/bin/bash
+# monero-wallet-rpc in --wallet-dir mode.
 #
-# This container holds a VIEW-ONLY wallet. It cannot spend funds even if the
-# host is fully compromised. It syncs nothing — it queries a remote daemon.
+# Boots with NO wallet loaded. bot.py calls open_wallet / generate_from_keys
+# over JSON-RPC at startup, so this container holds no keys.
 #
-# Deploy as a SECOND Railway service in the same project, then set the bot's
-# MONERO_RPC_URL to http://<service-name>.railway.internal:18083/json_rpc
+# Environment:
+#   MONERO_RPC_USER / MONERO_RPC_PASSWORD  digest auth. Set BOTH here AND on
+#                                          the bot service, identically.
+#   MONERO_DAEMON_ADDRESS                  remote node; no local sync needed
+#   WALLET_DIR                             volume mount (default /wallet/data)
+#   MONERO_RPC_PORT                        default 18083
 
-FROM ubuntu:24.04
+set -euo pipefail
 
-ARG MONERO_VERSION=v0.18.3.4
+WALLET_DIR="${WALLET_DIR:-/wallet/data}"
+RPC_PORT="${MONERO_RPC_PORT:-18083}"
+DAEMON="${MONERO_DAEMON_ADDRESS:-https://xmr-node.cakewallet.com:18081}"
+RUN_UID=10001
+RUN_GID=10001
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl bzip2 \
-    && rm -rf /var/lib/apt/lists/*
+echo "[entrypoint] wallet dir : ${WALLET_DIR}"
+echo "[entrypoint] daemon     : ${DAEMON}"
+echo "[entrypoint] rpc port   : ${RPC_PORT}"
 
-RUN set -eux; \
-    curl -fSL "https://downloads.getmonero.org/cli/monero-linux-x64-${MONERO_VERSION}.tar.bz2" \
-        -o /tmp/monero.tar.bz2; \
-    mkdir -p /opt/monero; \
-    tar -xjf /tmp/monero.tar.bz2 -C /opt/monero --strip-components=1; \
-    mv /opt/monero/monero-wallet-rpc /usr/local/bin/; \
-    mv /opt/monero/monero-wallet-cli /usr/local/bin/; \
-    rm -rf /tmp/monero.tar.bz2 /opt/monero
+# Railway mounts volumes owned by root. Without this the daemon cannot write
+# its .keys file, and generate_from_keys fails with a permission error that
+# reaches the bot as a generic RPC failure.
+mkdir -p "${WALLET_DIR}"
+if [ "$(id -u)" = "0" ]; then
+    echo "[entrypoint] fixing ownership of ${WALLET_DIR} -> ${RUN_UID}:${RUN_GID}"
+    chown -R "${RUN_UID}:${RUN_GID}" "$(dirname "${WALLET_DIR}")"
+    DROP_PRIV=(setpriv --reuid="${RUN_UID}" --regid="${RUN_GID}" --init-groups --)
+else
+    echo "[entrypoint] already unprivileged (uid $(id -u)); skipping chown"
+    DROP_PRIV=()
+fi
 
-RUN useradd -m -u 10001 monero
-WORKDIR /wallet
-RUN chown monero:monero /wallet
-USER monero
+AUTH_ARGS=()
+if [ -n "${MONERO_RPC_USER:-}" ] && [ -n "${MONERO_RPC_PASSWORD:-}" ]; then
+    echo "[entrypoint] digest auth ENABLED for user '${MONERO_RPC_USER}'"
+    AUTH_ARGS+=(--rpc-login "${MONERO_RPC_USER}:${MONERO_RPC_PASSWORD}")
+else
+    echo "[entrypoint] WARNING: MONERO_RPC_USER/MONERO_RPC_PASSWORD not set."
+    echo "[entrypoint] WARNING: RPC login DISABLED. Anything that can reach this"
+    echo "[entrypoint] WARNING: port can read your payment history. Acceptable"
+    echo "[entrypoint] WARNING: only while no public domain is attached."
+    AUTH_ARGS+=(--disable-rpc-login)
+fi
 
-COPY --chown=monero:monero entrypoint.sh /usr/local/bin/entrypoint.sh
-
-EXPOSE 18083
-ENTRYPOINT ["/bin/bash", "/usr/local/bin/entrypoint.sh"]
+# IPv6 is not optional here. Railway's private network is IPv6-only on
+# environments created before 2025-10-16, and <service>.railway.internal
+# publishes an AAAA record. Binding 0.0.0.0 alone listens on IPv4 only, so the
+# bot dials IPv6, packets are dropped, and you get a connect TIMEOUT rather
+# than a refusal. These flags produce a dual-stack listener.
+exec "${DROP_PRIV[@]}" monero-wallet-rpc \
+    --wallet-dir "${WALLET_DIR}" \
+    --rpc-bind-ip 0.0.0.0 \
+    --rpc-use-ipv6 \
+    --rpc-bind-ipv6-address :: \
+    --rpc-bind-port "${RPC_PORT}" \
+    --confirm-external-bind \
+    "${AUTH_ARGS[@]}" \
+    --daemon-address "${DAEMON}" \
+    --trusted-daemon \
+    --non-interactive \
+    --log-level 1
