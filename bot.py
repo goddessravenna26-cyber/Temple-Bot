@@ -2,6 +2,7 @@ import os
 import logging
 import asyncio
 import requests
+import socket
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
 
@@ -14,9 +15,29 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
 ADMIN_ID = os.getenv("ADMIN_USER_ID")
 ADMIN_PASS = os.getenv("ADMIN_PASSWORD")
-XMR_RPC_URL = os.getenv("MONERO_RPC_URL", "http://172.17.0")
+XMR_RPC_URL = os.getenv("MONERO_RPC_URL", "http://railway.internal")
 RPC_USER = os.getenv("MONERO_RPC_USER")
 RPC_PASS = os.getenv("MONERO_RPC_PASSWORD")
+
+def probe_rpc_endpoint():
+    """Probes the network routing to check if the wallet box is listening on IPv6"""
+    logger.info("Initializing preflight dual-stack network validation...")
+    try:
+        host = "amiable-curiosity.railway.internal"
+        port = 18083
+        for res in socket.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM):
+            af, socktype, proto, canonname, sa = res
+            family_str = "IPv6" if af == socket.AF_INET6 else "IPv4"
+            try:
+                s = socket.socket(af, socktype, proto)
+                s.settimeout(5)
+                s.connect(sa)
+                logger.info(f"Network path {family_str} -> CONNECTED to companion wallet box.")
+                s.close()
+            except Exception as conn_err:
+                logger.warning(f"Network path {family_str} -> TIMEOUT/REFUSED: {conn_err}")
+    except Exception as dns_err:
+        logger.error(f"DNS Resolution Failed: {dns_err}")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """The master Temple greeting message triggered by /start"""
@@ -61,14 +82,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(welcome_text, reply_markup=reply_markup)
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles the user clicking the generate subaddress button with direct routing auth"""
+    """Handles the user clicking the generate subaddress button with dual-stack connect timeouts"""
     query = update.callback_query
     await query.answer()
    
     try:
         payload = {"jsonrpc": "2.0", "id": "0", "method": "create_address", "params": {"account_index": 0}}
         auth = (RPC_USER, RPC_PASS) if RPC_USER else None
-        response = requests.post(XMR_RPC_URL, json=payload, auth=auth, timeout=5)
+       
+        # Split flat timeout into precise connect=10, read=120 parameters requested by Claude
+        response = requests.post(XMR_RPC_URL, json=payload, auth=auth, timeout=(10, 120))
        
         if response.status_code == 200:
             data = response.json()
@@ -80,7 +103,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
     except Exception as e:
-        logger.error(f"Direct wallet handshake query lag: {e}")
+        logger.error(f"Handshake timeout routing request: {e}")
+        probe_rpc_endpoint()
        
     await query.edit_message_text(
         text="⏳ **Establishing secure connection...**\nYour tracking wallet tunnel is generating its sync keys. Please try again in 30 seconds once the block path fully opens.",
@@ -88,11 +112,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 def main():
-    """Main application loop with self-healing polling loops"""
+    """Main application loop with unified polling handles"""
     if not TOKEN:
         logger.fatal("FATAL ERROR: TELEGRAM_BOT_TOKEN environment variable is missing!")
         return
 
+    probe_rpc_endpoint()
     application = Application.builder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(handle_callback))
@@ -102,3 +127,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
