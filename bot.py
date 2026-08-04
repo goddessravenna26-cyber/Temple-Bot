@@ -15,7 +15,7 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
 ADMIN_ID = os.getenv("ADMIN_USER_ID")
 ADMIN_PASS = os.getenv("ADMIN_PASSWORD")
-XMR_RPC_URL = os.getenv("MONERO_RPC_URL", "http://railway.internal")
+XMR_RPC_URL = "http://railway.internal"
 RPC_USER = os.getenv("MONERO_RPC_USER")
 RPC_PASS = os.getenv("MONERO_RPC_PASSWORD")
 
