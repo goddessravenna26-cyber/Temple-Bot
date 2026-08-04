@@ -1,19 +1,29 @@
-FROM sethsimmons/monero-wallet-rpc:latest
+FROM ubuntu:22.04
 
-# Explicitly build the secure data vault directory with adaptive controls
-USER root
-RUN mkdir -p /srv/xmr/wallets && chmod 777 /srv/xmr/wallets
+# Install basic download tools and secure certificates
+RUN apt-get update && apt-get install -y wget bzip2 ca-certificates && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /srv/xmr
+
+# Universal extraction blueprint using wildcard folder structures to prevent mismatch crashes
+RUN wget -O monero-linux.tar.bz2 https://getmonero.org \
+    && tar -xjvf monero-linux.tar.bz2 \
+    && cp monero-x86_64-linux-gnu-*/monero-wallet-rpc /usr/local/bin/ \
+    && rm -rf monero-linux.tar.bz2 monero-*
+
+# Build the secure data vault folder cleanly within internal permissions
+RUN mkdir -p /srv/xmr/wallets
 
 EXPOSE 18083
 
 # Run the modern view-only tracking engine with flawless dual-stack IPv6 support
-CMD monero-wallet-rpc \
-    --rpc-bind-ip 0.0.0.0 --rpc-bind-port 18083 \
-    --rpc-use-ipv6 --rpc-bind-ipv6-address :: \
-    --daemon-address https://moneroworld.com \
-    --wallet-dir /srv/xmr/wallets \
-    --disable-rpc-login \
-    --generate-from-view-key viewonly_wallet \
-    --password-file /dev/null \
-    --non-interactive
+CMD ["monero-wallet-rpc", \
+     "--rpc-bind-ip", "0.0.0.0", "--rpc-bind-port", "18083", \
+     "--rpc-use-ipv6", "--rpc-bind-ipv6-address", "::", \
+     "--daemon-address", "https://moneroworld.com", \
+     "--wallet-dir", "/srv/xmr/wallets", \
+     "--disable-rpc-login", \
+     "--generate-from-view-key", "viewonly_wallet", \
+     "--password-file", "/dev/null", \
+     "--non-interactive"]
 
